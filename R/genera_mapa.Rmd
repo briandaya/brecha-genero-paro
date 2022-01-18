@@ -1,0 +1,716 @@
+---
+title: "GCD UOC - Visualización de datos<br>Práctica II: Proyecto personal de visualización de datos."
+subtitle: "Doc. 2. Creación del mapa"
+author: 'Autora: Brianda Yáñez Arrondo'
+date: "Enero 2022<br><br>"
+output: 
+  html_document:
+    df_print: paged
+    highlight: default
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    number_sections: no
+---
+
+#### Librerías
+
+```{r message=FALSE, warning=FALSE}
+if (!require('dplyr')) install.packages('dplyr')
+library(dplyr)
+if (!require('sf')) install.packages('sf')  
+library(sf)  # Manejo de datos shp
+if (!require('rmapshaper')) install.packages('rmapshaper', dependencies=TRUE)
+library(rmapshaper)
+if (!require('leaflet')) install.packages('leaflet')
+library(leaflet)  # Librería para representación web de mapas con js
+if (!require('shiny')) install.packages('shiny')
+library(shiny)
+if (!require('sp')) install.packages('sp')  
+library(sp)  # Manejo de datos shp
+if (!require('RColorBrewer')) install.packages('RColorBrewer')
+library(RColorBrewer)
+if (!require('pxR')) install.packages('pxR')
+library(pxR)
+if (!require('geojsonio')) install.packages('geojsonio')
+library(geojsonio)
+if (!require('htmlwidgets')) install.packages('htmlwidgets')
+library(htmlwidgets)
+if (!require('htmltools')) install.packages('htmltools')
+library(htmltools)
+
+```
+
+# Polígonos España
+
+Carga de los datos de polígonos de la península, Baleares y Canarias, desde los ficheros shapefiles
+
+Fuente: [\<https://centrodedescargas.cnig.es/CentroDescargas/busquedaSerie.do?codSerie=LILIM#\>](https://centrodedescargas.cnig.es/CentroDescargas/busquedaSerie.do?codSerie=LILIM#){.uri}
+
+```{r message=FALSE, warning=FALSE}
+# lectura de los shp
+shp_peni_bal_muni <- st_read('geo_territorios/peninsula_baleares_muni.shp')
+shp_peni_bal_prov <- st_read('geo_territorios/peninsula_baleares_prov.shp')
+shp_peni_bal_ca <- st_read('geo_territorios/peninsula_baleares_ca.shp')
+shp_canarias_muni <- st_read('geo_territorios/canarias_muni.shp')
+shp_canarias_prov <- st_read('geo_territorios/canarias_prov.shp')
+shp_canarias_ca <- st_read('geo_territorios/canarias_ca.shp')
+
+```
+
+## Simplificación de la geometría
+
+```{r}
+# Simplificamos la geometría para reducir el tamaño de los datos
+
+#object.size(shp_peni_bal_muni)
+shp_peni_bal_muni <- rmapshaper::ms_simplify(shp_peni_bal_muni, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+#object.size(shp_peni_bal_muni)
+shp_peni_bal_prov <- rmapshaper::ms_simplify(shp_peni_bal_prov, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+shp_peni_bal_ca <- rmapshaper::ms_simplify(shp_peni_bal_ca, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+shp_canarias_muni <- rmapshaper::ms_simplify(shp_canarias_muni, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+shp_canarias_prov <- rmapshaper::ms_simplify(shp_canarias_prov, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+shp_canarias_ca <- rmapshaper::ms_simplify(shp_canarias_ca, keep_shapes=FALSE, 
+                                             keep=0.001, weighting=0.7, explode = TRUE)
+```
+
+## Vinculación de los datos de paro a los polígonos
+
+Carga de los datos de paro preparados
+
+```{r message=FALSE, warning=FALSE}
+paro_padron <- read.csv(file = 'datos/paro_padron.csv')
+paro_padron$NATCODE <- as.character(paro_padron$NATCODE)
+```
+
+Combinación de datos de paro municipales
+
+```{r}
+#Combinamos los datos
+full_shp_peni_bal_muni <- left_join(shp_peni_bal_muni, paro_padron)
+full_shp_canarias_muni <- left_join(shp_canarias_muni, paro_padron)
+
+rm(shp_peni_bal_muni, shp_canarias_muni)
+```
+
+## Canarias I: acercar a la Península
+
+```{r}
+# # Como unir los mapas reposicionando Canarias más cerca de la península: https://www.modeldifferently.com/en/2020/10/como-dibujar-mapas-en-r/
+
+# # Se extrae CRS de la Península y Baleares para recuperarlo después
+# crs <- st_crs(full_shp_peni_bal_muni) 
+# 
+# # Transformación de CRS y extracción de geometría de Canarias
+# canarias_geometry <- 
+#     full_shp_canarias_muni %>% 
+#     st_transform(crs) %>%  # transforma Canarias para usar el CRS de la Península
+#     st_geometry()  # extracción de la geometría
+# 
+# # Acercamos los polígonos de Canarias a la Península, sumándole una latitud y longitud
+# canarias_moved_geometry <- canarias_geometry + c(5, 7)
+# 
+# # Reintroducimos la nueva geometría desplazada en los datos de Canarias, restableciendo también el CRS (se resetea al asignar la nueva geometría)
+# canarias_moved_shp <- 
+#     full_shp_canarias_muni %>% 
+#     st_set_geometry(canarias_moved_geometry) %>%
+#     st_set_crs(crs)  # (st_set_geometry resetea el CRS a NULL)
+# 
+# 
+# # Unimos los datos de Península, Baleares y Canarias
+# shp_esp_muni <- rbind(full_shp_peni_bal_muni, canarias_moved_shp)
+# 
+# full_shp_canarias_muni <- NULL
+# full_shp_peni_bal_muni <- NULL
+# canarias_geometry <- NULL
+# canarias_moved_geometry <- NULL
+# canarias_moved_shp <- NULL
+# 
+# # Guardamos el fichero
+# #st_write(shp_esp_muni, 'geo_territorios/shp_esp_muni.shp')
+
+```
+
+## Canarias II: en su posición original
+
+```{r}
+# Unificamos los datos al crs europeo y unimos las geometrías de Península, Baleares y Canarias
+shp_esp_muni <- rbind(st_transform(full_shp_peni_bal_muni, 4258), st_transform(full_shp_canarias_muni, 4258))
+
+# Solo bordes, sin datos
+shp_esp_prov_perfil <- rbind(st_transform(shp_peni_bal_prov, 4258), st_transform(shp_canarias_prov, 4258))
+shp_esp_ca_perfil <- rbind(st_transform(shp_peni_bal_ca, 4258), st_transform(shp_canarias_ca, 4258))
+
+
+rm(full_shp_canarias_muni, full_shp_peni_bal_muni)
+```
+
+Filtro del periodo. Pendiente de desarrollo una barra de navegación temporal.
+
+```{r}
+df_map <- shp_esp_muni %>% filter(anio == 2020)
+rm(shp_esp_muni)
+```
+
+## Exportación del mapa a geojson para importar en otras herramientas
+
+```{r}
+# geojson_esp <- geojson_json(shp_esp_muni)
+# geojson_write(geojson_esp, file = "geo_territorios/shp_esp.geojson")
+```
+
+# Mapa
+
+## Elementos gráficos del mapa
+
+### Paletas de color
+
+```{r}
+paletaS <- "RdPu" # Secuencial, para las ratio de paro
+paletaD <- "Spectral" # Divergente, para las diferencias / brecha
+
+# Tomamos las variables con límite superior para el color
+pal_total <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_total, reverse=FALSE)
+pal_total_h <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_total_h, reverse=FALSE)
+pal_total_m <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_total_m, reverse=FALSE)
+
+pal_h_hasta_25 <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_h_hasta_25, reverse=FALSE)
+pal_h_25_45 <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_h_25_45, reverse=FALSE)
+pal_h_45_mas <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_h_45_mas, reverse=FALSE)
+pal_m_hasta_25 <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_m_hasta_25, reverse=FALSE)
+pal_m_25_45 <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_m_25_45, reverse=FALSE)
+pal_m_45_mas <- colorNumeric(palette=paletaS,na.color="#CCCCCC",
+							 domain=df_map$r2_m_45_mas, reverse=FALSE)
+
+# Diferencia porcentual tomamos las variables con límites de -1 a +1 para el color
+pal_dif_total <- colorNumeric(palette=paletaD,na.color="#CCCCCC",
+							 domain=df_map$dif_total, reverse=TRUE)
+pal_dif_hasta_25 <- colorNumeric(palette=paletaD,na.color="#CCCCCC",
+							 domain=df_map$dif_hasta_25, reverse=TRUE)
+pal_dif_25_45 <- colorNumeric(palette=paletaD,na.color="#CCCCCC",
+							 domain=df_map$dif_25_45, reverse=TRUE)
+pal_dif_45_mas <- colorNumeric(palette=paletaD,na.color="#CCCCCC",
+							 domain=df_map$dif_45_mas, reverse=TRUE)
+```
+
+### Grupos de capas
+
+```{r}
+layGroups1 <- c("Brecha total", "Brecha (<25 años)", 
+               "Brecha (25 a 45 años)", "Brecha (>45 años)")
+layGroups2 <- c("% Paro total mujeres", "% Paro mujeres (<25 años)", 
+                "% Paro mujeres(25 a 45 años)", "% Paro mujeres(>45 años)",
+                "% Paro total")
+layGroups3 <- c("% Paro total hombres", "% Paro hombres (<25 años)", 
+                "% Paro hombres(25 a 45 años)", "% Paro hombres(>45 años)",
+                "% Paro total")
+```
+
+### Etiquetas para los tooltips
+
+```{r}
+# Paro total
+labels_total <- 
+  ifelse((is.na(df_map$total_P)),
+    sprintf("<strong>%s.</strong><br/>
+            <sapan style='font-style:italic'>Sin datos</span>",df_map$NAMEUNIT),
+    sprintf(
+    "<strong>%s. Población total*: %s</strong><br/>
+    <sapan style='font-style:italic'>(%s - %s)</span><hr>
+    %s mujeres*, en paro el %s %% <br/>
+    %s hombres*, en paro el %s %% <br/>
+    Diferencia de paro entre mujeres y hombres: %s %%<br/>
+    * En edad laboral, de 16 a 67 años",
+    df_map$NAMEUNIT, prettyNum(df_map$total_P, big.mark='.', decimal.mark=','),
+    df_map$prov, df_map$ca,
+    prettyNum(df_map$total_m_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_total_m*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$total_h_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_total_h*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$dif_total*100, big.mark='.', decimal.mark=',', digits=2),
+    ifelse(df_map$dif_total>0, 'más', ifelse(df_map$dif_total<0, 'menos', ''))
+    )
+  )%>% lapply(htmltools::HTML)
+
+# Información de < 25 años
+labels_hasta_25 <- 
+  ifelse((is.na(df_map$m_hasta_25_P)),
+    sprintf("<strong>%s.</strong><br/>
+            <sapan style='font-style:italic'>Sin datos</span>",df_map$NAMEUNIT),
+    sprintf(
+    "<strong>%s. Población total de mujeres*: %s</strong><br/>
+    <sapan style='font-style:italic'>(%s - %s)</span><hr>
+    %s mujeres (<25 años), en paro el %s %% <br/>
+    %s hombres (<25 años), en paro el %s %% <br/>
+    Diferencia de paro entre mujeres y hombres (<25 años): %s %%<br/>
+    * Mujeres en edad laboral, de 16 a 67 años",
+    df_map$NAMEUNIT, prettyNum(df_map$total_m_P, big.mark='.', decimal.mark=','),
+    df_map$prov, df_map$ca,
+    prettyNum(df_map$m_hasta_25_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_m_hasta_25*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$h_hasta_25_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_h_hasta_25*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$dif_hasta_25*100, big.mark='.', decimal.mark=',', digits=2),
+    ifelse(df_map$dif_hasta_25>0, 'más', ifelse(df_map$dif_hasta_25<0, 'menos', ''))
+    )
+  )%>% lapply(htmltools::HTML)
+
+# Información de entre 25 y 45 años
+labels_25_45 <- 
+  ifelse((is.na(df_map$m_25_45_P)),
+    sprintf("<strong>%s.</strong><br/>
+            <sapan style='font-style:italic'>Sin datos</span>",df_map$NAMEUNIT),
+    sprintf(
+    "<strong>%s. Población total de mujeres*: %s</strong><br/>
+    <sapan style='font-style:italic'>(%s - %s)</span><hr>
+    %s mujeres (25 a 45 años), en paro el %s %% <br/>
+    %s hombres (25 a 45 años), en paro el %s %% <br/>
+    Diferencia de paro entre mujeres y hombres (25 a 45 años): %s %%<br/>
+    * Mujeres en edad laboral, de 16 a 67 años",
+    df_map$NAMEUNIT, prettyNum(df_map$total_m_P, big.mark='.', decimal.mark=','),
+    df_map$prov, df_map$ca,
+    prettyNum(df_map$m_25_45_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_m_25_45*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$h_25_45_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_h_25_45*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$dif_25_45*100, big.mark='.', decimal.mark=',', digits=2),
+    ifelse(df_map$dif_25_45>0, 'más', ifelse(df_map$dif_25_45<0, 'menos', ''))
+    )
+  )%>% lapply(htmltools::HTML)
+
+# Información de > 45 años
+labels_45_mas <- 
+  ifelse((is.na(df_map$m_45_mas_P)),
+    sprintf("<strong>%s.</strong><br/>
+            <sapan style='font-style:italic'>Sin datos</span>",df_map$NAMEUNIT),
+    sprintf(
+    "<strong>%s. Población total de mujeres*: %s</strong><br/>
+    <sapan style='font-style:italic'>(%s - %s)</span><hr>
+    %s mujeres (>45 años), en paro el %s %% <br/>
+    %s hombres (>45 años), en paro el %s %% <br/>
+    Diferencia de paro entre mujeres y hombres (>45 años): %s %%<br/>
+    * Mujeres en edad laboral, de 16 a 67 años",
+    df_map$NAMEUNIT, prettyNum(df_map$total_m_P, big.mark='.', decimal.mark=','),
+    df_map$prov, df_map$ca,
+    prettyNum(df_map$m_45_mas_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_m_45_mas*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$h_45_mas_P, big.mark='.', decimal.mark=','), 
+    prettyNum(df_map$r_h_45_mas*100, big.mark='.', decimal.mark=',', digits=2),
+    prettyNum(df_map$dif_45_mas*100, big.mark='.', decimal.mark=',', digits=2),
+    ifelse(df_map$dif_45_mas>0, 'más', ifelse(df_map$dif_45_mas<0, 'menos', ''))
+    )
+  )%>% lapply(htmltools::HTML)
+```
+
+### CSS Título y tooltips
+
+```{r}
+# Textos
+titulo1 <- tags$div(titulo.style, 
+    HTML('<h1>Diferencias de Género en el Paro en 2020 por municipios</h1>
+         <h4>% De diferencia entre mujeres y hombres</h4>')) 
+titulo2 <- tags$div(titulo.style, 
+    HTML('<h1>Diferencias de Género en el Paro en 2020 por municipios</h1>
+         <h4>% De mujeres en paro por tramo de edad</h4>')) 
+titulo3 <- tags$div(titulo.style, 
+    HTML('<h1>Diferencias de Género en el Paro en 2020 por municipios</h1>
+         <h4>% De hombres en paro por tramo de edad</h4>')) 
+
+datainfo <- tags$div(datainfo.style,
+HTML('<strong>Sobre los datos</strong></br>
+El % de paro es el número de personas en paro medio del año / número de personas según el Padrón a 31 de diciembre del mismo año, por género y mismo tramo de edad.</br>
+La diferencia de género es porcentual:</br>
+· Si hay más mujeres que hombres en paro (% mujeres - % hombres) / % mujeres</br>
+· Si hay más hombres que mujeres en paro (% mujeres - % hombres) / % hombres</br>
+Datos del paro: <a href="https://datos.gob.es/catalogo/ea0021425-paro-registrado-por-municipios">datos públicos del SEPE</a></br>
+Datos del padrón: <a href="https://www.ine.es/dynt3/inebase/index.htm?padre=6232&capsel=6233">Padrón continuo del INE</a></br>
+Polígonos territoriales: <a href="https://centrodedescargas.cnig.es/CentroDescargas/busquedaSerie.do?codSerie=LILIM#">Centro Nacional de Información Geográfica</a>
+                        '))
+autoria <- ' >>> <a href="https://creativecommons.org/licenses/by/4.0/deed.es">CC BY 4.0</a> | <a href="https://www.linkedin.com/in/briandayanez/">Brianda Yáñez</a> <<<  '
+```
+
+```{r}
+# Título y subtítulo del gráfico
+titulo.style <- tags$style(HTML('
+  .map-title.leaflet-control { 
+    position: fixed !important;
+    left: 50px;
+    text-align: left;
+    margin-left: 10px;
+    padding-left: 10px; 
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-size: 14px;
+  }
+  .map-title.leaflet-control h1 {
+    font-size: 16px;
+    line-height: 12px;
+  }
+  .map-title.leaflet-control h4 {
+    font-size: 14px;
+    font-weight: normal;
+    line-height: 12px;
+  }
+                                ' ))
+
+
+# Información sobre los datos y atribuciones
+datainfo.style <- tags$style(HTML('
+  .map-datainfo.leaflet-control { 
+    text-align: left;
+    padding-right: 10px; 
+    background: rgba(255,255,255,0.75);
+    font-size: 11px;
+    max-width: 25%;
+  }
+  .leaflet .legend i{
+    border-radius: 50%;
+    width:10px;
+    height: 10px;
+    margin-top: 4px;
+  }
+                                ' ))
+
+
+```
+
+## Mapa HTML
+
+```{r}
+# Formato del resaltado de los shapes
+hlOp <- highlightOptions(color = "white", weight = 1, bringToFront = TRUE)
+
+# Formato del tooltip
+lblOp <- labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                      textsize = "14px", direction = "auto")
+
+# Etiquetas de la leyenda
+labFormatFun <- function(type, cuts, p) {
+  n = length(cuts)
+  p = round(p*100,2)
+  cuts = sprintf("(%.2f - %.2f)%% | <sapan style='font-style:italic'>
+                 P. %.0f-%.0f</span>", cuts[-n]*100, cuts[-1]*100,p[-n],p[-1])
+  paste0(# mouse over las etiquetas de la leyenda
+      '<span title="p: (',p[-n]," - ",p[-1],')%">', cuts,'</span>')
+}  
+
+# Corregir la posición de NA en la leyenda
+# https://github.com/rstudio/leaflet/issues/615#issue-431696781
+css_fix <- "div.info.legend.leaflet-control br {clear: both;}" # CSS to correct spacing
+html_fix <- htmltools::tags$style(type = "text/css", css_fix)  # Convert CSS to HTML
+```
+
+#### Mapa de DIFERENCIAS PORCENTUALES
+
+```{r warning=FALSE}
+
+# Generación del mapa de diferencias PORCENTUALES
+m1 <- leaflet(df_map, options=leafletOptions(minZoom = 5, maxZoom = 9)) %>%
+    #addControl(html = titulo1, position = 'topleft', className="map-title")%>%
+    #addControl(html = datainfo, position = 'bottomleft', className="map-datainfo")%>%
+    addTiles(attribution = autoria)  %>%
+    setView( lat=41, lng=-3 , zoom=5.5) %>%
+
+    # CAPAS DE POLÍGONOS POR VARIABLE
+    addPolygons(color='#999', weight=1, opacity=1.0, 
+              fillColor=~pal_dif_total(dif_total),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_total, 
+              labelOptions=lblOp, group='Brecha total') %>% 
+    addPolygons(color='#999', weight=1, opacity=1.0, 
+              fillColor=~pal_dif_hasta_25(dif_hasta_25),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_hasta_25, 
+              labelOptions=lblOp, group='Brecha (<25 años)') %>% 
+    addPolygons(color='#999', weight=1, opacity=1.0, 
+              fillColor=~pal_dif_25_45(dif_25_45),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_25_45, 
+              labelOptions=lblOp, group='Brecha (25 a 45 años)') %>% 
+    addPolygons(color='#999', weight=1, opacity=1.0, 
+              fillColor=~pal_dif_45_mas(dif_45_mas),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_45_mas, 
+              labelOptions=lblOp, group='Brecha (>45 años)') %>% 
+
+    addPolygons(color='#FFF', data = shp_esp_prov_perfil, weight = 1.5,
+              opacity = 0.5, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+    addPolygons(color='#FFF', data = shp_esp_ca_perfil, weight = 3,
+              opacity = 0.25, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+
+    # CAPA DE LEYENDA. Como sólo es un rango no es necesario hacer capas por grupos.
+    addLegend(pal=pal_dif_total, values=~dif_total, opacity=0.7, 
+            title="Diferencia.</br>(-) Más paro hombres que mujeres</br>
+            (+) Más paro mujeres que hombres",
+            position = "bottomright", na.label = 'Sin datos',
+            labFormat = labelFormat(prefix="", suffix="%", between=" &ndash; ",
+                            digits=3, big.mark=",", transform=function(x) 100 * x)
+    ) %>%
+    
+    addLayersControl(
+      baseGroups = layGroups1,
+      options = layersControlOptions(collapsed = FALSE),
+      overlayGroups = c('Mostrar límites provinciales')
+    ) %>%
+    # https://github.com/rstudio/leaflet/issues/430#issuecomment-304429145
+    htmlwidgets::onRender("
+        function(el, x) {
+          this.on('baselayerchange', function(e) {
+            e.layer.bringToBack();
+          })
+        }
+    ") %>%
+    htmlwidgets::prependContent(html_fix)  # Posición de NA
+    
+
+# m1
+
+```
+
+#### Mapa de RANGOS EDAD - MUJERES
+
+```{r warning=FALSE}
+
+# Generación del mapa de paro de mujeres por tramos de edad
+m2 <- leaflet(df_map, options=leafletOptions(minZoom = 5, maxZoom = 9)) %>%
+    #addControl(html = titulo2, position = 'topleft', className="map-title")%>%
+    #addControl(datainfo, position = 'bottomleft', className="map-datainfo")%>%
+    addTiles(attribution = autoria)  %>%
+    setView( lat=41, lng=-3 , zoom=4.5) %>%
+
+    # CAPAS DE POLÍGONOS POR VARIABLE
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_total_m(r_total_m),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_total,
+              labelOptions=lblOp, group='% Paro total mujeres') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_m_hasta_25(r_m_hasta_25),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_hasta_25,
+              labelOptions=lblOp, group='% Paro mujeres (<25 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_m_25_45(r_m_25_45),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_25_45,
+              labelOptions=lblOp, group='% Paro mujeres(25 a 45 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_m_45_mas(r_m_45_mas),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_45_mas,
+              labelOptions=lblOp, group='% Paro mujeres(>45 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_total(r_total),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_total,
+              labelOptions=lblOp, group='% Paro total') %>%
+
+    addPolygons(color='#FFF', data = shp_esp_prov_perfil, weight = 1.5,
+              opacity = 0.5, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+    addPolygons(color='#FFF', data = shp_esp_ca_perfil, weight = 3,
+              opacity = 0.25, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+
+  
+
+    # Leyenda. Todas las capas comparten el mismo rango.
+    addLegend(pal=pal_total, values=~r2_total, opacity=0.7, title="% de paro",
+        position = "bottomright", na.label = 'Sin datos',
+        labFormat = labelFormat(prefix="", suffix="%", between=" &ndash; ",
+                        digits=3, big.mark=",", transform=function(x) 100 * x)) %>%
+
+    addLayersControl(
+      baseGroups = layGroups2,
+      options = layersControlOptions(collapsed = FALSE),
+      overlayGroups = c('Mostrar límites provinciales')
+      ) %>%
+      # https://github.com/rstudio/leaflet/issues/430#issuecomment-304429145
+      htmlwidgets::onRender("
+          function(el, x) {
+            this.on('baselayerchange', function(e) {
+              e.layer.bringToBack();
+            })
+          }
+      ") %>%
+    htmlwidgets::prependContent(html_fix)  # Posición de NA
+
+# m2
+```
+
+#### Mapa de RANGOS DE EDAD-HOMBRES
+
+```{r}
+# Generación del mapa de paro de hombres por tramos de edad
+m3 <- leaflet(df_map, options=leafletOptions(minZoom = 5, maxZoom = 9)) %>%
+    #addControl(html = titulo3, position = 'topleft', className="map-title")%>%
+    #addControl(datainfo, position = 'bottomleft', className="map-datainfo")%>%
+    addTiles(attribution = autoria)  %>%
+    setView( lat=41, lng=-3 , zoom=4.5) %>%
+
+    # CAPAS DE POLÍGONOS POR VARIABLE
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_total_h(r_total_h),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_total,
+              labelOptions=lblOp, group='% Paro total hombres') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_h_hasta_25(r_h_hasta_25),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_hasta_25,
+              labelOptions=lblOp, group='% Paro hombres (<25 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_h_25_45(r_h_25_45),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_25_45,
+              labelOptions=lblOp, group='% Paro hombres(25 a 45 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_h_45_mas(r_h_45_mas),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_45_mas,
+              labelOptions=lblOp, group='% Paro hombres(>45 años)') %>%
+    addPolygons(color='#999', weight=1, opacity=1.0,
+              fillColor=~pal_total(r_total),
+              fillOpacity=1, highlightOptions=hlOp, label=labels_total,
+              labelOptions=lblOp, group='% Paro total') %>%
+
+    addPolygons(color='#FFF', data = shp_esp_prov_perfil, weight = 1.5,
+              opacity = 0.5, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+    addPolygons(color='#FFF', data = shp_esp_ca_perfil, weight = 3,
+              opacity = 0.25, fill = FALSE, group = 'Mostrar límites provinciales') %>%
+
+  
+
+    # Leyenda. Todas las capas comparten el mismo rango.
+    addLegend(pal=pal_total, values=~r2_total, opacity=0.7, title="% de paro",
+        position = "bottomright", na.label = 'Sin datos',
+        labFormat = labelFormat(prefix="", suffix="%", between=" &ndash; ",
+                        digits=3, big.mark=",", transform=function(x) 100 * x)) %>%
+
+    addLayersControl(
+      baseGroups = layGroups3,
+      options = layersControlOptions(collapsed = FALSE),
+      overlayGroups = c('Mostrar límites provinciales')
+      ) %>%
+      
+      # https://github.com/rstudio/leaflet/issues/430#issuecomment-304429145
+      htmlwidgets::onRender("
+          function(el, x) {
+            this.on('baselayerchange', function(e) {
+              e.layer.bringToBack();
+            })
+          }
+      ") %>%
+    htmlwidgets::prependContent(html_fix)  # Posición de NA
+
+# m3
+```
+
+#### Exportación de mapas a HTML con el código incrustado
+
+```{r}
+saveWidget(m1, file="map1_tot2020.html")
+saveWidget(m2, file="map2_tot2020.html")
+saveWidget(m3, file="map3_tot2020.html")
+```
+
+Mapa en Shiny. La carga de polígonos es extremadamente lenta aun simplificando los polígonos.
+
+```{r}
+# Pendiente de investigar los problemas de rendimiento para mostrar todos los municipios
+
+# # Componentes Shiny
+# # Basado en:
+# #   https://rquer.netlify.app/leaflet_map/leaflet_maps_third_part/
+# #   https://github.com/rstudio/shiny-examples/tree/main/063-superzip-example
+# 
+# ui <- bootstrapPage(
+#   tags$style(type = "text/css", "html, body {width:100%;height:100%}"),
+#   leafletOutput("map", width = "100%", height = "100%"),
+#   actionButton("plotbutton", label = "Add Markers"),
+#   absolutePanel(top = 10, right = 10,
+#                 selectInput("color",
+#                             "Personas en paro:",
+#                             c("% Total" = "r_total",
+#                               "% Mujeres en paro" = "r_total_m",
+#                               "% Hombres en paro" = "r_total_h"),
+#                             selected = "r_total"),
+#                 selectInput("size",
+#                             "Tamaño del círculo</br>Población (en edad laboral):",
+#                              c("Total" = "total_P",
+#                                "Mujeres" = "total_m_P",
+#                                "Hombres" = "total_h_P"), selected = 'total_P')
+#   )
+# )
+# 
+# server <- function(input, output, session) {
+# 
+#   output$map <- renderLeaflet({
+#         leaflet() %>%
+#             addTiles(urlTemplate = '//tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
+#                      attribution = '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a>, &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors'
+#                      )  %>%
+#             setView( lat=40, lng=-3 , zoom=4)
+#     })
+#     
+#   observe({
+#     colorBy <- input$color
+#     #sizeBy <- input$size
+# 
+#     colorData <- df_map[[colorBy]]
+#     muniID <- df_map$NATCODE
+#     
+#     pal <- colorQuantile(palette = paletaS, n=6, na.color = "#FFFFFF",
+#                       domain = colorData, probs = qprobs)#, reverse=TRUE)
+#     
+#     pal_S <- colorQuantile(palette = paletaS, n=6, na.color = "#FFFFFF",
+#                       domain = df_map$r_total_m, 
+#                       probs = qprobs, reverse=FALSE)
+#     #if (sizeBy == "superzip") {
+#     #  # Radius is treated specially in the "superzip" case.
+#     #  radius <- ifelse(zipdata$centile >= (100 - input$threshold), 30000, 3000)
+#     #} else {
+#     #  radius <- zipdata[[sizeBy]] / max(zipdata[[sizeBy]]) * 30000
+#     #}
+#     if (colorBy == 'r_total'){
+#         legend_tit <- 'Total en paro'
+#         radius <- log(df_map$total_P)
+#     } else if (colorBy == 'r_total_m'){
+#         legend_tit <- 'Mujeres en paro'
+#         radius <- log(df_map$total_m_P)
+#     } else if (colorBy =='r_total_h'){
+#         legend_tit <- 'Hombres en paro'
+#         radius <- log(df_map$total_h_P)
+#     }
+#     
+#     leafletProxy("map", data = colorData) %>%
+#       clearShapes() %>%
+#       addPolygons(
+#           data=df_map$geometry,
+#           color='#999999',
+#           weight = 1, #smoothFactor = 0.5,
+#           fillColor = pal(colorData), opacity = 1.0, fillOpacity = 1,
+#           highlightOptions = hlOp,
+#           label = labels, labelOptions = lblOp
+#           ) %>%
+#       # addCircles(data=centroides, radius=radius, layerId=muniID,
+#       #   stroke=FALSE, fillOpacity=0.4, fillColor=pal(colorData)) %>%
+# 
+#       addLegend(pal = pal, values=colorData, opacity = 0.7, 
+#                 title = legend_tit, layerId = 'colorLegend',
+#             position = "bottomright", labFormat = function(type, cuts, p) {
+#                     n = length(cuts)
+#                     p = round(p*100,2)
+#                     cuts = sprintf("(%.2f - %.2f)%% | <sapan style='font-style:italic'>P. %.0f-%.0f</span>", cuts[-n]*100, cuts[-1]*100,p[-n],p[-1])
+#                     # mouse over las etiquetas de la leyenda para mostrar
+#                     # los percentiles de cada rango
+#                     paste0(
+#                       '<span title="p: (',p[-n]," - ",p[-1],')%">', cuts,
+#                       '</span>')
+#                     }
+#             )
+# 
+#   })
+#   
+# }
+# 
+# shinyApp(ui, server)
+```

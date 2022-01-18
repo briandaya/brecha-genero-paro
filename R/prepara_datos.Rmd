@@ -1,0 +1,523 @@
+---
+title: "GCD UOC - Visualización de datos<br>Práctica II: Proyecto personal de visualización de datos."
+subtitle: "Doc. 1. Captura y preparación de datos"
+author: 'Autora: Brianda Yáñez Arrondo'
+date: "Enero 2022<br><br>"
+output: 
+  html_document:
+    df_print: paged
+    highlight: default
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+    number_sections: no
+---
+
+### Librerías
+
+```{r}
+if (!require('units')) install.packages('units')
+if (!require('sf')) install.packages('sf') # Manejo de datos shapefile shp
+library(sf)
+
+if (!require('leaflet')) install.pakages('leaflet')
+library(leaflet)
+if (!require('htmlwidgets')) install.packages('htmlwidgets')
+library(htmlwidgets)
+if (!require('pxR')) install.packages('pxR')
+library(pxR)
+#if (!require('tidyverse')) install.packages('tidyverse')
+#library(tidyverse)
+if (!require('data.table')) install.packages('data.table')
+library(data.table)
+if (!require('ggplot2')) install.packages('ggplot2')
+library(ggplot2)
+
+
+```
+
+### Polígonos España
+
+Carga de los datos de polígonos de la península, Baleares y Canarias, desde los ficheros shapefiles
+
+Fuente: <https://centrodedescargas.cnig.es/CentroDescargas/busquedaSerie.do?codSerie=LILIM#>
+
+```{r}
+# lectura de un shp
+shp_peni_bal_muni <- st_read('geo_territorios/peninsula_baleares_muni.shp')
+shp_canarias_muni <- st_read('geo_territorios/canarias_muni.shp')
+```
+
+### Datos del padrón
+
+Estadísticas de padrón continuo toda la serie 2003-2020: <https://www.ine.es/dynt3/inebase/index.htm?padre=6232&capsel=6233>
+
+Tomamos los datos toda España, de "Población por sexo, municipios y edad (año a año): [https://www.ine.es/pcaxisdl/t20/e245/p05/a%s/l0/00000001.px](https://www.ine.es/pcaxisdl/t20/e245/p05/a%s/l0/00000001.px)
+
+```{r}
+# De la fuente
+#padron20032020 <- read.px("https://www.ine.es/jaxiT3/files/t/es/px/33575.px")
+# Local
+padron20032020 <- read.px("datos/33575.px")
+
+# Utilizamos data.table porque tiene buen rendimiento con ficheros grandes
+padron20032020 <- as.data.table(padron20032020)
+
+# Un vistazo al fichero
+head(padron20032020)
+str(padron20032020)
+```
+
+#### Transformaciones
+
+A la vez que realizamos transformaciones de algunas variables vamos eliminando registros innecesarios para ir reduciendo el tamaño del fichero y agilizar los procesos
+
+```{r}
+# Registros innecesarios
+padron20032020 <- padron20032020[Municipios!='Total Nacional']
+padron20032020 <- padron20032020[Edad..año.a.año.!='Todas las edades']
+padron20032020 <- padron20032020[Sexo!='Total']
+
+# Periodo -> anio
+padron20032020[, anio:=as.integer(substr(Periodo,nchar(as.character(Periodo))-3,nchar(as.character(Periodo))))]
+# Eliminamos la variable original de Periodo
+padron20032020[, Periodo:=NULL]
+
+# Prescindimos de los registros anteriores a 2006 (datos del paro desde ese año)
+padron20032020 <- padron20032020[anio>=2006]
+
+# Edad..año.a.año. -> edad
+padron20032020[, edad:=as.numeric(sapply(strsplit(as.character(Edad..año.a.año.), " "), "[[", 1))]
+# Eliminamos la variable original de Periodo
+padron20032020[, Edad..año.a.año.:=NULL]
+
+# Grupos de edad
+# Primero filtramos solo las edades laborales
+padron20032020 <- padron20032020[edad>=16 & edad<=67]
+# Necesitamos los grupos <25, de 25 a 45, y de >45
+padron20032020[, rango:=cut(edad, breaks = c(0,24,45,67), 
+                            labels=c('hasta_25_P','25_45_P','45_mas_P'))]
+# Quitamos la edad
+padron20032020[, edad:=NULL]
+
+# Separación del municipio y su código en dos variables
+padron20032020[, cod_muni:=as.numeric(substr(Municipios,0,5))]
+padron20032020[, muni:=substr(Municipios,7,nchar(as.character(Municipios)))]
+# Eliminamos la variable original de municipio
+padron20032020[, Municipios:=NULL]
+
+# Sexo
+padron20032020[, Sexo:=ifelse(Sexo=='Hombres', 'h', 'm')]
+```
+
+#### Dimensionalidad
+
+Primero agregamos los datos por los rangos de edad, creamos una nueva variable combinando sexo y rango de edad para conformar el nombre de las variables que utiliza el fichero de paro, y por último trasladamos este valor a columna para conseguir el mismo formato.
+
+```{r}
+# Agrupamos y sumamos los valores de paro
+padron20032020 <- padron20032020[,.(padron=sum(value)), by=c('anio','cod_muni','muni','Sexo','rango')]
+
+# Combinamos las variables Sexo y rango y las quitamos
+padron20032020[, cols:=paste(Sexo, rango, sep="_")]
+padron20032020[, Sexo:=NULL]
+padron20032020[, rango:=NULL]
+
+# Pasamos los rangos de edad a columnas en correspondencia con los datos de paro
+padron20032020 <- dcast(padron20032020, anio + cod_muni + muni ~ cols, value.var = 'padron')
+```
+
+Los datos del padrón de 2021 aún no están disponibles para descarga con este nivel de detalle, por lo que para 2021 tomaremos de referencia los de 2020. Habrá que hacerlo constar en una anotación en la visualización.
+
+```{r}
+padron21 <- padron20032020[padron20032020$anio==2020]
+padron21[, anio:=2021]
+
+padron <- rbindlist(list(padron20032020, padron21), use.names = TRUE)
+
+# Una última comprobación por si hay duplicados
+padron[duplicated(padron, by=c('cod_muni','anio'))]
+
+# limpiamos datos
+rm(padron20032020, padron21)
+```
+
+**Valores perdidos**
+
+Existen años en municipios para los que no existen datos de padrón, pero en muchos de los casos sí de paro, por ello completaremos los valores nulos del padrón con el valor de un año cercano del mismo municipio
+
+```{r}
+lost_padron <- padron[rowSums(is.na(padron)) > 0, c('cod_muni','muni','anio')]
+lost_padron <- lost_padron[, .(min(anio),max(anio)), by = c('cod_muni','muni')]
+
+# Si faltan los primeros años tomaremos de referencia el primer año con datos
+# Si faltan los últimos años tomaremos de referenca el último año con datos
+lost_padron[, anioref:=ifelse(V1==2006, V2+1, V1-1)]
+
+for (i in 1:nrow(lost_padron)) {
+    lost <- lost_padron[i]
+    ref_padron <- padron[cod_muni==lost$cod_muni & anio==lost$anioref]
+    padron[, h_hasta_25_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$h_hasta_25_P, h_hasta_25_P)]
+    padron[, h_25_45_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$h_25_45_P, h_25_45_P)]
+    padron[, h_45_mas_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$h_45_mas_P, h_45_mas_P)]
+    padron[, m_hasta_25_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$m_hasta_25_P, m_hasta_25_P)]
+    padron[, m_25_45_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$m_25_45_P, m_25_45_P)]
+    padron[, m_45_mas_P:=ifelse(
+                            (cod_muni==lost$cod_muni & anio>=lost$V1 & anio<=lost$V2),
+                            ref_padron$m_45_mas_P, m_45_mas_P)]
+}
+
+# Liberando entorno
+rm(lost, lost_padron, i)
+
+```
+
+### Datos de paro
+
+#### Obtención de los datos de paro desde la fuente:
+
+```{r}
+# # Años disponibles
+# anios <- seq.int(2006,2021)  
+# # Lista de urls de los ficheros
+# urls <- sprintf('https://sede.sepe.gob.es/es/portaltrabaja/resources/sede/datos_abiertos/datos/Paro_por_municipios_%s_csv.csv', anios)
+# 
+# # Función para obtener los datos de cada url
+# get_paro <- function(url_list) {
+#     paroy <- read.csv(file = url_list, 
+#                      skip = 1, sep = ';', fileEncoding = "Latin1")
+#     paroy <- as.data.table(paroy)
+# }
+# 
+# # Creamos una lista con todos los datos
+# paro_hist <- lapply(urls, FUN = get_paro)
+# 
+# # Unimos todos los datos en una tabla
+# paro <- rbindlist(paro_hist, use.names = TRUE)
+# 
+# # Liberamos memoria
+# paro_hist <- NULL
+# 
+# # Cambiamos los nombres de las variables y creamos una nueva con la codificación del municipio que utilizan los ficheros de polígonos para el mapa:
+# names(paro) <- c('anio_mes', 'mes', 'cod_ca', 'ca', 'cod_prov', 'prov', 
+#                  'cod_muni', 'muni', 'total', 'h_hasta_25', 'h_25_45', 
+#                  'h_45_mas', 'm_hasta_25', 'm_25_45',     'm_45_mas', 
+#                  'agricultura', 'industria', 'construccion', 'servicios', 
+#                  'sin_empleo_ant')
+# 
+# # Guardamos los datos en un fichero para no tener que volver a descargarlos
+# fwrite(paro, "datos/paro_2006a2021.csv")
+```
+
+#### Obtención de los datos de paro desde fichero local:
+
+```{r}
+# Carga del fichero histórico de paro que ya hemos generado previamente
+paro <- read.csv(file = 'datos/paro_2006a2021.csv')
+paro <- as.data.table(paro)
+```
+
+**Transformaciones**
+
+```{r}
+# Prescindimos de los datos sectoriales ya que no tenemos la información segregada por sexo
+paro <- paro[,c(1:15)]
+
+# Código del municipio para la correspondencia con el shapefile
+paro$NATCODE <- with(paro, sprintf("34%02d%02d%05d", cod_ca,cod_prov,cod_muni))
+```
+
+```{r}
+# Comprobación de valores nulos
+paro[rowSums(is.na(paro)) > 0, ]
+```
+
+```{r}
+# Primero calculamos el año
+paro[, anio:=trunc(anio_mes/100)]
+paro[, anio_mes:=NULL]
+paro[, mes:=NULL]
+```
+
+Ãlgunos municipios que comparten código, como sólo tenemos un polígono por código los vamos a agrupar sumando los valores, y utilizando el nombre del municipio que conste en el padrón para cada código.
+
+```{r}
+# Buscamos los códigos duplicados
+muni <- unique(paro[, c('cod_muni','muni')])
+muni <- muni[, .(count = .N), by = c('cod_muni')]
+muni[muni$count>1]
+```
+
+```{r}
+# Actualizamos los nombres de los municipios con los que constan en el padrón
+paro[cod_muni=='17028', muni := unique(padron[cod_muni=='17028']$muni)]
+paro[cod_muni=='17034', muni := unique(padron[cod_muni=='17034']$muni)]
+paro[cod_muni=='46257', muni := unique(padron[cod_muni=='46257']$muni)]
+paro[cod_muni=='6903', muni := unique(padron[cod_muni=='6903']$muni)]
+```
+
+Agregamos los datos anuales con la media
+
+```{r}
+agg_anio <- c('cod_ca','ca','cod_prov','prov','cod_muni','muni','NATCODE','anio')
+paro <- paro[, lapply(.SD, mean), by=agg_anio]
+
+# Como se trata de personas utilizaremos el entero, truncando los decimales. De esta forma se previene también que el censo pueda tener un valor superior en algunos casos puntuales.
+
+paro$total <- trunc(paro$total)
+paro$h_hasta_25 <- trunc(paro$h_hasta_25)
+paro$h_25_45 <- trunc(paro$h_25_45)
+paro$h_45_mas <- trunc(paro$h_45_mas)
+paro$m_hasta_25 <- trunc(paro$m_hasta_25)
+paro$m_25_45 <- trunc(paro$m_25_45)
+paro$m_45_mas <- trunc(paro$m_45_mas)
+```
+
+```{r}
+# Comprobamos que no haya duplicados
+paro[duplicated(paro, by=c('cod_muni','anio'))]
+```
+
+### Combinación de los datos del paro y el padrón
+
+Hay algunas diferencias en los nombres de los municipios por lo que en el join nos quedamos con el nombre de los datos del Padrón
+
+```{r}
+# Establecemos la cláusula ON como keys de las tablas:
+setkey(paro, cod_muni, anio)
+setkey(padron, cod_muni, anio)
+paro_padron <- paro[padron]
+
+# Nos quedamos con el nombre del municipio de los datos del Padrón
+paro_padron[, muni:=i.muni]
+paro_padron[, i.muni:=NULL]
+```
+
+#### Datos faltantes
+
+Algunos municipios no tienen datos de paro, queremos que en el mapa se especifique este hecho.
+
+```{r}
+# Los muncipios sin datos de paro queremos mostrarlos también, hay que completar los datos administrativos~
+
+paro_padron[is.na(cod_prov), cod_prov := trunc(cod_muni/1000)]
+setDT(paro_padron)[, prov:= prov[!is.na(prov)][1L] , by = cod_prov]
+setDT(paro_padron)[, cod_ca:= cod_ca[!is.na(cod_ca)][1L] , by = cod_prov]
+setDT(paro_padron)[, ca:= ca[!is.na(ca)][1L] , by = cod_prov]
+paro_padron[is.na(NATCODE), NATCODE := sprintf("34%02d%02d%05d", cod_ca,cod_prov,cod_muni)]
+
+#paro_padron[rowSums(is.na(paro_padron)) > 0, ]
+```
+
+#### Transformaciones
+
+Los datos de parados son una media anual de los datos mensuales, y, por las migraciones de población que ha podido haber durante el año, existen situaciones en las que el paro medio anual es mayor que la población. Esto sucede especialmente con menores de 25 años. En estos casos vamos a actualizar la cifra de padrón a con la del paro.
+
+```{r}
+# Situaciones que vamos a actualizar: son 112 de las casi 130.000 observaciones
+paro_padron[paro_padron$m_hasta_25>paro_padron$m_hasta_25_P | 
+            paro_padron$m_25_45>paro_padron$m_25_45_P |
+            paro_padron$m_45_mas>paro_padron$m_45_mas_P |
+            paro_padron$h_hasta_25>paro_padron$h_hasta_25_P | 
+            paro_padron$h_25_45>paro_padron$h_25_45_P |
+            paro_padron$h_45_mas>paro_padron$h_45_mas_P]
+
+# Actualización
+paro_padron[, m_hasta_25_P:=ifelse(m_hasta_25>m_hasta_25_P, m_hasta_25, m_hasta_25_P)]
+paro_padron[, m_25_45_P:=ifelse(m_25_45>m_25_45_P, m_25_45, m_25_45_P)]
+paro_padron[, m_45_mas_P:=ifelse(m_45_mas>m_45_mas_P, m_45_mas, m_45_mas_P)]
+paro_padron[, h_hasta_25_P:=ifelse(h_hasta_25>h_hasta_25_P, h_hasta_25, h_hasta_25_P)]
+paro_padron[, h_25_45_P:=ifelse(h_25_45>h_25_45_P, h_25_45, h_25_45_P)]
+paro_padron[, h_45_mas_P:=ifelse(h_45_mas>h_45_mas_P, h_45_mas, h_45_mas_P)]
+```
+
+```{r}
+paro_padron[paro_padron$m_hasta_25>paro_padron$m_hasta_25_P | 
+            paro_padron$m_25_45>paro_padron$m_25_45_P |
+            paro_padron$m_45_mas>paro_padron$m_45_mas_P |
+            paro_padron$h_hasta_25>paro_padron$h_hasta_25_P | 
+            paro_padron$h_25_45>paro_padron$h_25_45_P |
+            paro_padron$h_45_mas>paro_padron$h_45_mas_P]
+```
+
+### Ratios
+
+#### Ratios de parados/padrón.
+
+```{r}
+# Totales de paro en total, total_h y total_m
+paro_padron[, total_h:=h_hasta_25+h_25_45+h_45_mas]
+paro_padron[, total_m:=m_hasta_25+m_25_45+m_45_mas]
+
+# Totales de padrón en total_P, total_h_P y total_m_P
+paro_padron[, total_h_P:=h_hasta_25_P+h_25_45_P+h_45_mas_P]
+paro_padron[, total_m_P:=m_hasta_25_P+m_25_45_P+m_45_mas_P]
+paro_padron[, total_P:=total_h_P+total_m_P]
+
+
+# Ratios de totales en r_total, r_total_h y r_total_m
+paro_padron[, r_total:=
+    ifelse(total_P==0 | total==0, 0, round(total/total_P,5))]
+paro_padron[, r_total_h:=
+    ifelse(total_h_P==0 | total_h==0, 0, round(total_h/total_h_P,5))]
+paro_padron[, r_total_m:=
+    ifelse(total_m_P==0 | total_m==0, 0, round(total_m/total_m_P,5))]
+
+# Ratios de rangos de edad en r_h_rango y r_m_rango
+paro_padron[, r_h_hasta_25:=
+    ifelse(h_hasta_25==0 | h_hasta_25_P==0, 0, round(h_hasta_25/h_hasta_25_P,5))]
+paro_padron[, r_h_25_45:=
+    ifelse(h_25_45==0 | h_25_45_P==0, 0, round(h_25_45/h_25_45_P,5))]
+paro_padron[, r_h_45_mas:=
+    ifelse(h_45_mas==0 | h_45_mas_P==0, 0, round(h_45_mas/h_45_mas_P,5))]
+paro_padron[, r_m_hasta_25:=
+    ifelse(m_hasta_25==0 | m_hasta_25_P==0, 0, round(m_hasta_25/m_hasta_25_P,5))]
+paro_padron[, r_m_25_45:=
+    ifelse(m_25_45==0 | m_25_45_P==0, 0, round(m_25_45/m_25_45_P,5))]
+paro_padron[, r_m_45_mas:=
+    ifelse(m_45_mas==0 | m_45_mas_P==0, 0, round(m_45_mas/m_45_mas_P,5))]
+
+```
+
+Comprobamos las ratio se encuentren entre 0 y 1
+
+```{r}
+summary(paro_padron[,c(27:35)])
+```
+
+```{r}
+quantile(paro_padron$r_total, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_total_h, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_total_m, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_h_hasta_25, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_h_25_45, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_h_45_mas, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_m_hasta_25, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_m_25_45, c(0.95, 0.97, 0.99), na.rm = TRUE)
+quantile(paro_padron$r_m_45_mas, c(0.95, 0.97, 0.99), na.rm = TRUE)
+
+hist(df_map$r_total, breaks = 20)
+hist(df_map$r_total_h, breaks = 20)
+hist(df_map$r_total_m, breaks = 20)
+
+hist(df_map$r_h_hasta_25, breaks = 20)
+hist(df_map$r_h_25_45, breaks = 20)
+hist(df_map$r_h_45_mas, breaks = 20)
+hist(df_map$r_m_hasta_25, breaks = 20)
+hist(df_map$r_m_25_45, breaks = 20)
+hist(df_map$r_m_45_mas, breaks = 20)
+```
+
+A efectos visuales creamos variables con un valor para el corte superior del color. Tomando de referencia las distribuciones aplicaremos el corte en el 0.3
+
+```{r}
+paro_padron[, r2_total:=   ifelse((r_total)>0.3, 0.3, r_total)]
+paro_padron[, r2_total_h:= ifelse(r_total_h>0.3, 0.3, r_total_h)]
+paro_padron[, r2_total_m:= ifelse(r_total_m>0.3, 0.3, r_total_m)]
+paro_padron[, r2_h_hasta_25:= ifelse(r_h_hasta_25>0.3, 0.3, r_h_hasta_25)]
+paro_padron[, r2_h_25_45:= ifelse(r_h_25_45>0.3, 0.3, r_h_25_45)]
+paro_padron[, r2_h_45_mas:= ifelse(r_h_45_mas>0.3, 0.3, r_h_45_mas)]
+paro_padron[, r2_m_hasta_25:= ifelse(r_m_hasta_25>0.3, 0.3, r_m_hasta_25)]
+paro_padron[, r2_m_25_45:= ifelse(r_m_25_45>0.3, 0.3, r_m_25_45)]
+paro_padron[, r2_m_45_mas:= ifelse(r_m_45_mas>0.3, 0.3, r_m_45_mas)]
+```
+
+------------------------------------------------------------------------
+
+#### Ratios de diferencias
+
+Hay varias maneras de calcular la diferencia, utilizando las ratios respecto al padrón previamente calculadas, y que pueden hacer variar mucho la representación gráfica:
+
+-   Diferencia porcentual: `(Mujeres - Hombres)/Mujeres`
+
+-   Diferencia absoluta: `Mujeres - Hombres`
+
+-   Incremento en mujeres respecto a hombres: `(Mujeres-Hombres)/Hombres`
+
+-   Ratio: `Mujeres/Hombres`
+
+-   Ratio Log: `log Mujeres/Hombres`
+
+Por ejemplo para Alcalá de Henares, del total de personas en paro:
+
+```{r}
+paro_adh <- paro_padron[muni=='Alcalá de Henares' & anio==2020]
+sprintf('Ratio total hombres en paro: %.2f', paro_adh$r_total_h*100)
+sprintf('Ratio total mureres en paro: %.2f', paro_adh$r_total_m*100)
+sprintf('Diferencia del total: %.2f', (paro_adh$r_total_m-paro_adh$r_total_h)*100/paro_adh$r_total_m)
+sprintf('Incremento del total: %.2f', (paro_adh$r_total_m-paro_adh$r_total_h)*100/paro_adh$r_total_h)
+sprintf('Ratio: %.2f', paro_adh$r_total_m*100/paro_adh$r_total_h)
+sprintf('Ratio Log: %.2f', log(paro_adh$r_total_m/paro_adh$r_total_h)*100)
+```
+
+La diferencia entre el paro de hombres y de mujeres, expresado como porcentaje del paro de las mujeres (`(Mujeres - Hombres)/Mujeres)`, resulta confusa en valores negativos ya que por ejemplo en pequeños municipios en los que hay muy pocas mujeres resulta en valores como -600% o -1800%. Para mejorar la comprensibilidad se utilizará la diferencia directa `(Mujeres - Hombres)`
+
+A efectos de la visualización por colores, se crea otra variable con las diferencias pero transformadas las \>1 a 1, y las \<-1 a -1. En el detalle al pasar sobre el municipio sí mostraremos los valores reales
+
+```{r}
+# Diferencia porcentual.
+# Si el paro es mayor en mujeres (% mujeres - % hombres)/%mujeres
+# Si el paro es mayor en hombres (% mujeres - % hombres)/%hombres
+
+paro_padron[, dif_total:=
+   ifelse((r_total_m-r_total_h)==0 | r_total_m==0, 0, 
+          ifelse((r_total_m-r_total_h)<0,
+                 round((r_total_m-r_total_h)/r_total_h,5),
+                 round((r_total_m-r_total_h)/r_total_m,5)))]
+
+paro_padron[, dif_hasta_25:=
+   ifelse((r_m_hasta_25-r_h_hasta_25)==0 | r_m_hasta_25==0, 0, 
+          ifelse((r_m_hasta_25-r_h_hasta_25)<0,
+                 round((r_m_hasta_25-r_h_hasta_25)/r_h_hasta_25,5),
+                 round((r_m_hasta_25-r_h_hasta_25)/r_m_hasta_25,5)))]
+
+paro_padron[, dif_25_45:=
+   ifelse((r_m_25_45-r_h_25_45)==0 | r_m_25_45==0, 0, 
+          ifelse((r_m_25_45-r_h_25_45)<0,
+                 round((r_m_25_45-r_h_25_45)/r_h_25_45,5),
+                 round((r_m_25_45-r_h_25_45)/r_m_25_45,5)))]
+
+paro_padron[, dif_45_mas:=
+   ifelse((r_m_45_mas-r_h_45_mas)==0 | r_m_45_mas==0, 0, 
+          ifelse((r_m_45_mas-r_h_45_mas)<0,
+                 round((r_m_45_mas-r_h_45_mas)/r_h_45_mas,5),
+                 round((r_m_45_mas-r_h_45_mas)/r_m_45_mas,5)))]
+```
+
+```{r}
+hist(paro_padron$dif_total, breaks = 20)
+hist(paro_padron$dif_hasta_25, breaks = 20)
+hist(paro_padron$dif_25_45, breaks = 20)
+hist(paro_padron$dif_45_mas, breaks = 20)
+```
+
+```{r}
+# paro_padron[, dif2_total:= ifelse(dif_total>1, 1, 
+#                                   ifelse(dif_total<(-1), -1, dif_total))]
+# paro_padron[, dif2_hasta_25:= ifelse(dif_hasta_25>1, 1, 
+#                                   ifelse(dif_hasta_25<(-1), -1, dif_hasta_25))]
+# paro_padron[, dif2_25_45:= ifelse(dif_25_45>1, 1, 
+#                                   ifelse(dif_25_45<(-1), -1, dif_25_45))]
+# paro_padron[, dif2_45_mas:= ifelse(dif_45_mas>1, 1, 
+#                                   ifelse(dif_45_mas<(-1), -1, dif_45_mas))]
+```
+
+> *En este punto guardamos un fichero con los datos para no volver a ejecutar el proceso previo*
+
+```{r}
+fwrite(paro_padron, "datos/paro_padron.csv")
+```
+
+------------------------------------------------------------------------
+
+#### 
