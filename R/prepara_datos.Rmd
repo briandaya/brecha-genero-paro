@@ -2,6 +2,8 @@
 title: "GCD UOC - Visualización de datos<br>Práctica II: Proyecto personal de visualización de datos."
 subtitle: "Doc. 1. Captura y preparación de datos"
 author: 'Autora: Brianda Yáñez Arrondo'
+github: 'https://github.com/briandaya/brecha-genero-paro'
+web: 'https://briandaya.github.io/brecha-genero-paro-dataviz/'
 date: "Enero 2022<br><br>"
 output: 
   html_document:

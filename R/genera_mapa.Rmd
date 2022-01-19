@@ -2,6 +2,8 @@
 title: "GCD UOC - Visualización de datos<br>Práctica II: Proyecto personal de visualización de datos."
 subtitle: "Doc. 2. Creación del mapa"
 author: 'Autora: Brianda Yáñez Arrondo'
+github: 'https://github.com/briandaya/brecha-genero-paro'
+web: 'https://briandaya.github.io/brecha-genero-paro-dataviz/'
 date: "Enero 2022<br><br>"
 output: 
   html_document:
@@ -24,6 +26,8 @@ if (!require('rmapshaper')) install.packages('rmapshaper', dependencies=TRUE)
 library(rmapshaper)
 if (!require('leaflet')) install.packages('leaflet')
 library(leaflet)  # Librería para representación web de mapas con js
+if (!require('leaflet.extras')) install.packages('leaflet.extras')
+library(leaflet.extras)  # Librería para representación web de mapas con js
 if (!require('shiny')) install.packages('shiny')
 library(shiny)
 if (!require('sp')) install.packages('sp')  
@@ -209,8 +213,8 @@ pal_dif_45_mas <- colorNumeric(palette=paletaD,na.color="#CCCCCC",
 ### Grupos de capas
 
 ```{r}
-layGroups1 <- c("Brecha total", "Brecha (<25 años)", 
-               "Brecha (25 a 45 años)", "Brecha (>45 años)")
+layGroups1 <- c("Dif. total", "Dif. (<25 años)", 
+                "Dif. (25 a 45 años)", "Dif. (>45 años)")
 layGroups2 <- c("% Paro total mujeres", "% Paro mujeres (<25 años)", 
                 "% Paro mujeres(25 a 45 años)", "% Paro mujeres(>45 años)",
                 "% Paro total")
@@ -339,7 +343,7 @@ Datos del paro: <a href="https://datos.gob.es/catalogo/ea0021425-paro-registrado
 Datos del padrón: <a href="https://www.ine.es/dynt3/inebase/index.htm?padre=6232&capsel=6233">Padrón continuo del INE</a></br>
 Polígonos territoriales: <a href="https://centrodedescargas.cnig.es/CentroDescargas/busquedaSerie.do?codSerie=LILIM#">Centro Nacional de Información Geográfica</a>
                         '))
-autoria <- ' >>> <a href="https://creativecommons.org/licenses/by/4.0/deed.es">CC BY 4.0</a> | <a href="https://www.linkedin.com/in/briandayanez/">Brianda Yáñez</a> <<<  '
+autoria <- ' >>> <a href="https://creativecommons.org/licenses/by/4.0/deed.es">CC BY 4.0</a> | <a href="https://www.linkedin.com/in/briandayanez/" target="_blank">Brianda Yáñez</a> <<<  '
 ```
 
 ```{r}
@@ -381,6 +385,9 @@ datainfo.style <- tags$style(HTML('
     width:10px;
     height: 10px;
     margin-top: 4px;
+  }
+  .info.legend.leaflet-control {
+    font-size: 12px;
   }
                                 ' ))
 
@@ -427,20 +434,24 @@ m1 <- leaflet(df_map, options=leafletOptions(minZoom = 5, maxZoom = 9)) %>%
     # CAPAS DE POLÍGONOS POR VARIABLE
     addPolygons(color='#999', weight=1, opacity=1.0, 
               fillColor=~pal_dif_total(dif_total),
-              fillOpacity=1, highlightOptions=hlOp, label=labels_total, 
-              labelOptions=lblOp, group='Brecha total') %>% 
+              fillOpacity=1, highlightOptions=hlOp, 
+              label=labels_total, popup = muni, 
+              labelOptions=lblOp, group='Dif. total') %>% 
     addPolygons(color='#999', weight=1, opacity=1.0, 
               fillColor=~pal_dif_hasta_25(dif_hasta_25),
-              fillOpacity=1, highlightOptions=hlOp, label=labels_hasta_25, 
-              labelOptions=lblOp, group='Brecha (<25 años)') %>% 
+              fillOpacity=1, highlightOptions=hlOp, 
+              label=labels_hasta_25, popup=muni, 
+              labelOptions=lblOp, group='Dif. (<25 años)') %>% 
     addPolygons(color='#999', weight=1, opacity=1.0, 
               fillColor=~pal_dif_25_45(dif_25_45),
-              fillOpacity=1, highlightOptions=hlOp, label=labels_25_45, 
-              labelOptions=lblOp, group='Brecha (25 a 45 años)') %>% 
+              fillOpacity=1, highlightOptions=hlOp, 
+              label=labels_25_45, popup=muni, 
+              labelOptions=lblOp, group='Dif. (25 a 45 años)') %>% 
     addPolygons(color='#999', weight=1, opacity=1.0, 
               fillColor=~pal_dif_45_mas(dif_45_mas),
-              fillOpacity=1, highlightOptions=hlOp, label=labels_45_mas, 
-              labelOptions=lblOp, group='Brecha (>45 años)') %>% 
+              fillOpacity=1, highlightOptions=hlOp, 
+              label=labels_45_mas, popup=muni, 
+              labelOptions=lblOp, group='Dif. (>45 años)') %>% 
 
     addPolygons(color='#FFF', data = shp_esp_prov_perfil, weight = 1.5,
               opacity = 0.5, fill = FALSE, group = 'Mostrar límites provinciales') %>%
@@ -449,18 +460,25 @@ m1 <- leaflet(df_map, options=leafletOptions(minZoom = 5, maxZoom = 9)) %>%
 
     # CAPA DE LEYENDA. Como sólo es un rango no es necesario hacer capas por grupos.
     addLegend(pal=pal_dif_total, values=~dif_total, opacity=0.7, 
-            title="Diferencia.</br>(-) Más paro hombres que mujeres</br>
-            (+) Más paro mujeres que hombres",
+            title="Diferencia.</br>(-) > paro hombres</br>
+            (+) > paro mujeres",
             position = "bottomright", na.label = 'Sin datos',
             labFormat = labelFormat(prefix="", suffix="%", between=" &ndash; ",
                             digits=3, big.mark=",", transform=function(x) 100 * x)
     ) %>%
     
+    # # SEARCH. Habría que crear otra capa con los perfiles de los municipios y asignarle el grupo "nc", pero haría que pesara aún más el html.
+    # addResetMapButton() %>%
+    # addSearchFeatures(
+    #     targetGroups  = "nc",
+    #     options = searchFeaturesOptions(zoom = 8, openPopup = TRUE)) %>%
+
     addLayersControl(
       baseGroups = layGroups1,
       options = layersControlOptions(collapsed = FALSE),
       overlayGroups = c('Mostrar límites provinciales')
     ) %>%
+    
     # https://github.com/rstudio/leaflet/issues/430#issuecomment-304429145
     htmlwidgets::onRender("
         function(el, x) {
